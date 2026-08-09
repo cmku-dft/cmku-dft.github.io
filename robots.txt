@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://cmku-dft.github.io/computational-materials-unit/sitemap.xml
