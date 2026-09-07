@@ -66,6 +66,9 @@
 
 /* Make the department line in the institution banner an identifiable link. */
 .institution a:hover{text-decoration:underline;text-underline-offset:3px}
+.institution span{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px}
+.institution .landscapeLink{padding-left:10px;border-left:1px solid #0d234033;color:var(--ochre2);font-weight:750}
+@media(max-width:520px){.institution span{display:grid;gap:3px}.institution .landscapeLink{padding-left:0;border-left:0}}
 
 /* Give older activities a compact homepage preview and a full photo-story page. */
 .eventPreview{display:grid;grid-template-columns:minmax(0,2fr) minmax(150px,.8fr);gap:10px;width:min(900px,100%);margin-top:28px}
