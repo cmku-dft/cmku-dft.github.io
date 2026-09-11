@@ -69,7 +69,12 @@
 .researchPapers ol{display:grid;gap:13px;margin:18px 0 0;padding:0;list-style:none}
 .researchPapers li{padding:0;border:0;font-size:.875rem;line-height:1.5}
 .researchPapers li span{display:block;margin-top:3px;color:var(--slate);font-size:.8125rem}
-.researchCard.researchOngoing{background:#edf1f4;border-top:3px solid var(--ochre)}
+.researchCard.researchOngoing{grid-column:1/-1;background:#edf1f4;border-top:3px solid var(--ochre)}
+.researchOngoing .researchFocus dl{grid-template-columns:repeat(3,minmax(0,1fr))}
+.researchCollaborations{padding-bottom:70px;margin-top:-25px}
+.researchCollaborations h3{font:550 1.75rem var(--serif);color:var(--navy)}
+.researchCollaborations>p:not(.kicker){max-width:850px;color:var(--slate);font-size:1rem;line-height:1.7}
+@media(max-width:740px){.researchOngoing .researchFocus dl{grid-template-columns:1fr}.researchCollaborations{margin-top:0}}
 .researchFocus{margin:28px 0;padding:26px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 .researchFocus .kicker{font-size:.875rem;letter-spacing:.07em}
 .researchFocus dl{display:grid;gap:24px;margin:24px 0 0}
