@@ -69,6 +69,10 @@
 .researchPapers ol{display:grid;gap:13px;margin:18px 0 0;padding:0;list-style:none}
 .researchPapers li{padding:0;border:0;font-size:.875rem;line-height:1.5}
 .researchPapers li span{display:block;margin-top:3px;color:var(--slate);font-size:.8125rem}
+.studentAvatar.audomsakCurrentPortrait{position:relative;overflow:hidden;border:2px solid var(--paper);box-shadow:0 0 0 1px #0d234020}
+.student .audomsakCurrentPortrait img{position:absolute;width:174px;max-width:none;height:auto;left:-51px;top:-80px;border:0;border-radius:0;box-shadow:none}
+.audomsakAlumniPortrait{position:relative;overflow:hidden}
+.audomsakAlumniPortrait img{position:absolute;width:158px;max-width:none;height:auto;left:-47px;top:-73px;border:0;border-radius:0}
 .researchCard.researchOngoing{grid-column:1/-1;background:#edf1f4;border-top:3px solid var(--ochre)}
 .researchOngoing .researchFocus dl{grid-template-columns:repeat(3,minmax(0,1fr))}
 .researchCollaborations{padding-bottom:70px;margin-top:-25px}
