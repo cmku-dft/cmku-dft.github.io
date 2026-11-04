@@ -1,0 +1,48 @@
+############################################################
+# Cl in ZnO - example for defconchem (web app or command line)
+# Formation energies from S. Charoenphon et al., Phys. Rev. Materials 10, 084602 (2026)
+# Carriers from effective masses (no DOS file needed). To use a DOS instead, add
+#   DOS_FILE DOSCAR / NELECT 36 / CARRIER_MODEL DOS
+# m_h* below is illustrative; for n-type Cl:ZnO it has almost no effect.
+############################################################
+BANDGAP         3.30
+EFFECTIVE_MASS  0.28  0.59          # m_e*  m_h*  (DOS masses, in m0)
+CARRIER_MODEL   EMA
+VOLUME_ANG3     47.67               # 4-atom primitive wurtzite cell (2 Zn, 2 O sites)
+
+TEMPERATURE         300             # device temperature (K)
+FREEZE_TEMPERATURE  800             # growth temperature (K)
+FREEZE_DEFECTS      ALL
+
+DMU_RANGE  ClZnO  O  -3.19  0.0  41
+
+# ---------- defects: DEFECT <name> <sites per cell>; STATE <q> <Ef0> <g> ----------
+DEFECT V_Zn 2
+STATE  2    2.60   1
+STATE  1    2.92   1
+STATE  0    3.82   1
+STATE -1    5.17   1
+STATE -2    6.98   1
+END
+
+DEFECT V_O 2
+STATE  0    4.25   1
+STATE  1    2.31   1
+STATE  2   -0.12   1
+END
+
+DEFECT Cl_O 2
+STATE  0    3.43   1
+STATE  1   -0.39   1
+END
+
+COMPLEX  Cl_O--V_Zn
+COMP     Cl_O_q1   1    V_Zn_q-2   1
+BINDING  2.09
+G_COMPLEX 4.0
+END
+
+# ---------- chemical-potential dependence (n = atoms removed) ----------
+STOICH  V_Zn   O   -1.0
+STOICH  V_O    O    1.0
+STOICH  Cl_O   O    0.5

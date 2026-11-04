@@ -1,0 +1,474 @@
+/* defconchem web app — UI, input composition and plotting.
+   The physics lives in py/defconchem.py (the same file as the command-line tool). */
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const FORM_KEYS = new Set(["DOS_FILE", "BANDGAP", "SPIN", "POSCAR_FILE", "VOLUME_ANG3", "DOS_VOLUME_ANG3",
+  "DOS_VBM", "DOS_CBM", "TEMPERATURE", "FREEZE_TEMPERATURE", "FREEZE_DEFECTS", "NELECT",
+  "EFFECTIVE_MASS", "CARRIER_MODEL", "DMU_RANGE"]);
+const PALETTE = {
+  light: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"],
+  dark:  ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"],
+};
+const DASHES = ["solid", "dash", "dot", "dashdot"];
+
+let worker = null, ready = false, lastRun = null, runId = 0, engineMode = "python";
+
+/* ------------------------------------------------------------------ engines */
+// Python (Pyodide in a Web Worker) is the reference engine. Browsers block workers and
+// fetch() on pages opened from disk (file://), so there - or with ?engine=js, or if Python
+// cannot load - the page uses the JavaScript port in engine.js (same input, same physics,
+// agrees with the Python engine to ~1e-10).
+function startEngine() {
+  const want = new URLSearchParams(location.search).get("engine");
+  if (location.protocol === "file:" || want === "js") useJsEngine(location.protocol === "file:"
+    ? "Opened from disk, so the built-in JavaScript engine is used. On GitHub Pages (or a local web server) the Python engine runs." : "");
+  else startWorker();
+}
+
+function useJsEngine(note) {
+  if (worker) { try { worker.terminate(); } catch (e) { /* ignore */ } worker = null; }
+  if (!window.DefconEngine) {
+    setStatus("fatal", "Engine failed to load");
+    showError("engine.js is missing next to index.html.");
+    return;
+  }
+  engineMode = "js";
+  ready = true;
+  setStatus("ready", `Ready · engine ${DefconEngine.version}`);
+  $("ver").textContent = DefconEngine.version;
+  $("refText").textContent = $("templateSrc").textContent.trim();
+  $("btnRun").disabled = $("btnCheck").disabled = false;
+  if (note) { const h = $("loadHint"); h.hidden = false; h.textContent = note; }
+}
+
+function runJs(text, fmap, check) {
+  const id = runId;
+  setTimeout(() => {
+    const t0 = performance.now();
+    const r = DefconEngine.run(text, fmap, { check });
+    if (id !== runId) return;
+    $("btnRun").disabled = $("btnCheck").disabled = false;
+    $("progress").hidden = true;
+    showResult({ ok: r.ok, log: r.log, err: r.err, result: r.result, files: r.result ? r.result.files : {},
+      seconds: (performance.now() - t0) / 1000 });
+  }, 30);
+}
+
+function startWorker() {
+  setStatus("loading", "Loading Python…");
+  const base = new URLSearchParams(location.search).get("pyodide");
+  worker = new Worker("worker.js" + (base ? `?base=${encodeURIComponent(base)}` : ""));
+  worker.onmessage = (ev) => {
+    const m = ev.data;
+    if (m.type === "status") setStatus("loading", m.text);
+    else if (m.type === "ready") {
+      ready = true;
+      setStatus("ready", `Ready · engine ${m.version}`);
+      $("ver").textContent = m.version;
+      $("refText").textContent = m.template;
+      $("btnRun").disabled = $("btnCheck").disabled = false;
+    } else if (m.type === "fatal") {
+      useJsEngine("The Python runtime could not be loaded (it is downloaded from cdn.jsdelivr.net), so the built-in JavaScript engine is used instead.");
+    } else if (m.type === "progress") {
+      $("progress").hidden = false;
+      $("progressBar").style.width = `${(100 * m.done) / m.total}%`;
+    } else if (m.type === "result") {
+      if (m.id !== runId) return;
+      $("btnRun").disabled = $("btnCheck").disabled = false;
+      $("progress").hidden = true;
+      showResult(m);
+    }
+  };
+  worker.onerror = () => useJsEngine("The Python engine could not start in this browser, so the built-in JavaScript engine is used instead.");
+}
+
+function setStatus(kind, text) {
+  $("status").className = `status ${kind}`;
+  $("statusText").textContent = text;
+}
+
+/* ------------------------------------------------------------- form <-> text */
+const val = (id) => $(id).value.trim();
+const num = (id) => (val(id) === "" ? null : Number(val(id)));
+const radio = (name) => document.querySelector(`input[name="${name}"]:checked`).value;
+const setRadio = (name, v) => { const r = document.querySelector(`input[name="${name}"][value="${v}"]`); if (r) r.checked = true; };
+
+function dosFsName() {
+  const f = $("dosFile").files[0];
+  if (!f) return null;
+  const t = $("dosType").value;
+  if (t === "doscar") return "DOSCAR";
+  if (t === "vasprun") return "vasprun.xml";
+  if (t === "text") return "dos_text.dat";
+  const n = f.name.toLowerCase();
+  if (n.endsWith(".xml")) return "vasprun.xml";
+  if (n.includes("doscar")) return "DOSCAR";
+  return "dos_text.dat";
+}
+
+function composeInput(forRun) {
+  const L = ["# ===== generated by the defconchem web app =====", `BANDGAP ${val("bandgap")}`];
+  const cm = radio("cm");
+  const dosName = dosFsName();
+  const errs = [];
+  if (forRun && dosName) {
+    L.push(`DOS_FILE ${dosName}`);
+  } else if (!forRun && $("dosFile").dataset.ref) {
+    L.push(`DOS_FILE ${$("dosFile").dataset.ref}`);
+  }
+  if (dosName || $("dosFile").dataset.ref) {
+    if (num("nelect") !== null) L.push(`NELECT ${val("nelect")}`);
+    if (num("dosVbm") !== null) L.push(`DOS_VBM ${val("dosVbm")}`);
+    if (num("dosCbm") !== null) L.push(`DOS_CBM ${val("dosCbm")}`);
+    if (dosName === "dos_text.dat") {
+      if (num("dosVol") !== null) L.push(`DOS_VOLUME_ANG3 ${val("dosVol")}`);
+      L.push(`SPIN ${val("spin")}`);
+    }
+  }
+  const me = num("me"), mh = num("mh");
+  if (me !== null && mh !== null) L.push(`EFFECTIVE_MASS ${me} ${mh} ${num("ae") || 0} ${num("ah") || 0}`);
+  L.push(`CARRIER_MODEL ${cm}`);
+  if (forRun) {
+    if (cm === "DOS" && !dosName) errs.push("Carrier model is “DOS file” but no DOS file is attached.");
+    if (cm === "EMA" && (me === null || mh === null)) errs.push("Carrier model is “Effective masses” but m_e*/m_h* are empty.");
+  }
+  if (radio("cell") === "vol") {
+    if (num("vol") === null && forRun) errs.push("Give the defect-site cell volume.");
+    L.push(`VOLUME_ANG3 ${val("vol")}`);
+  } else {
+    if (forRun && !$("poscarFile").files[0]) errs.push("Attach a POSCAR for the defect-site cell (or give a volume).");
+    L.push("POSCAR_FILE POSCAR");
+  }
+  L.push(`TEMPERATURE ${val("T")}`);
+  if ($("freezeOn").checked) {
+    L.push(`FREEZE_TEMPERATURE ${val("Tg")}`);
+    L.push(`FREEZE_DEFECTS ${val("frozen") || "ALL"}`);
+  }
+  if ($("scanOn").checked) {
+    L.push(`DMU_RANGE ${val("base") || "scan"} ${val("elem") || "X"} ${val("mu0")} ${val("mu1")} ${Math.max(1, parseInt(val("nmu") || "1", 10))}`);
+  }
+  L.push("", "# ===== defects, complexes, stoichiometry =====", $("editor").value);
+  return { text: L.join("\n") + "\n", errs };
+}
+
+function loadInputText(text, sourceName) {
+  const editor = [];
+  const notes = [];
+  let inBlock = false, seenDefects = false, ranges = 0;
+  $("freezeOn").checked = false;
+  $("scanOn").checked = false;
+  $("dosFile").dataset.ref = "";
+  // a new input starts clean: attached files and DOS options belong to the previous setup
+  $("dosFile").value = ""; $("poscarFile").value = ""; $("dosType").value = "auto";
+  ["nelect", "dosVbm", "dosCbm", "dosVol"].forEach((id) => { $(id).value = ""; });
+  $("spin").value = "1";
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.split("#")[0].trim();
+    const parts = line.split(/\s+/);
+    const key = (parts[0] || "").toUpperCase();
+    if (inBlock) { editor.push(raw); if (key === "END") inBlock = false; continue; }
+    if (!line) { if (seenDefects) editor.push(raw); continue; }
+    if (key === "DEFECT" || key === "COMPLEX") { inBlock = true; seenDefects = true; editor.push(raw); continue; }
+    if (!FORM_KEYS.has(key)) { seenDefects = true; editor.push(raw); continue; }
+    const v = parts.slice(1);
+    switch (key) {
+      case "BANDGAP": $("bandgap").value = v[0]; break;
+      case "TEMPERATURE": $("T").value = v[0]; break;
+      case "FREEZE_TEMPERATURE": $("Tg").value = v[0]; $("freezeOn").checked = true; break;
+      case "FREEZE_DEFECTS": $("frozen").value = v.join(" "); break;
+      case "VOLUME_ANG3": $("vol").value = v[0]; setRadio("cell", "vol"); break;
+      case "POSCAR_FILE": setRadio("cell", "poscar"); notes.push(`The input refers to POSCAR “${v[0]}” — attach it under Defect-site cell (or switch to Volume).`); break;
+      case "NELECT": $("nelect").value = v[0]; break;
+      case "DOS_VBM": $("dosVbm").value = v[0]; break;
+      case "DOS_CBM": $("dosCbm").value = v[0]; break;
+      case "DOS_VOLUME_ANG3": $("dosVol").value = v[0]; break;
+      case "SPIN": $("spin").value = v[0] === "2" ? "2" : "1"; break;
+      case "DOS_FILE": $("dosFile").dataset.ref = v[0]; notes.push(`The input refers to DOS file “${v[0]}” — attach it under DOS file.`); setRadio("cm", "DOS"); break;
+      case "EFFECTIVE_MASS": ["me", "mh", "ae", "ah"].forEach((id, i) => { $(id).value = v[i] !== undefined ? v[i] : ""; }); break;
+      case "CARRIER_MODEL": setRadio("cm", v[0].toUpperCase() === "DOS" ? "DOS" : "EMA"); break;
+      case "DMU_RANGE":
+        if (ranges === 0) {
+          $("scanOn").checked = true;
+          [$("base").value, $("elem").value, $("mu0").value, $("mu1").value, $("nmu").value] = v;
+        } else { editor.push(raw); }
+        ranges++;
+        break;
+    }
+  }
+  if (ranges > 1) notes.push(`${ranges - 1} additional DMU_RANGE line(s) were kept in the editor and will also be run.`);
+  // Old inputs used VOLUME_ANG3 or a POSCAR; if neither was given, POSCAR was the default.
+  if (!/^\s*(VOLUME_ANG3|POSCAR_FILE)\b/im.test(text)) {
+    setRadio("cell", "poscar");
+    notes.push("No VOLUME_ANG3 in the input: the command-line default is a file named POSCAR — attach it or switch to Volume.");
+  }
+  // legacy inputs without CARRIER_MODEL: DOS if a DOS file is referenced
+  if (!/^\s*CARRIER_MODEL\b/im.test(text)) setRadio("cm", $("dosFile").dataset.ref ? "DOS" : "EMA");
+  if (!/^\s*EFFECTIVE_MASS\b/im.test(text)) ["me", "mh", "ae", "ah"].forEach((id) => { $(id).value = ""; });
+  $("editor").value = editor.join("\n").replace(/^\n+/, "").replace(/\n{3,}/g, "\n\n");
+  syncVisibility();
+  const hint = $("loadHint");
+  hint.hidden = notes.length === 0;
+  hint.textContent = (sourceName ? `Loaded ${sourceName}. ` : "") + notes.join(" ");
+}
+
+function syncVisibility() {
+  const poscar = radio("cell") === "poscar";
+  $("volField").hidden = poscar;
+  $("poscarField").hidden = !poscar;
+  $("freezeOpts").hidden = !$("freezeOn").checked;
+  $("scanOpts").hidden = !$("scanOn").checked;
+  $("textOpts").hidden = dosFsName() !== "dos_text.dat";
+}
+
+/* ------------------------------------------------------------------- run */
+async function runCalc(check) {
+  if (!ready) return;
+  const { text, errs } = composeInput(true);
+  if (errs.length) { showError(errs.join("\n")); return; }
+  const files = [];
+  const dos = $("dosFile").files[0];
+  if (dos) files.push({ name: dosFsName(), data: await dos.arrayBuffer() });
+  if (radio("cell") === "poscar" && $("poscarFile").files[0]) {
+    files.push({ name: "POSCAR", data: await $("poscarFile").files[0].arrayBuffer() });
+  }
+  $("btnRun").disabled = $("btnCheck").disabled = true;
+  $("progress").hidden = check;
+  $("progressBar").style.width = "0";
+  lastRun = { input: text };
+  runId += 1;
+  if (engineMode === "js") {
+    const fmap = {};
+    for (const f of files) fmap[f.name] = new TextDecoder().decode(f.data);
+    runJs(text, fmap, check);
+    return;
+  }
+  worker.postMessage({ cmd: "run", id: runId, input: text, files, check }, files.map((f) => f.data));
+}
+
+/* --------------------------------------------------------------- results */
+function showError(msg) {
+  $("empty").hidden = true;
+  $("out").hidden = false;
+  const box = $("errorBox");
+  box.hidden = !msg;
+  box.textContent = msg || "";
+  if (msg) box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function escapeHtml(s) { return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+
+function renderLog(log, err) {
+  const lines = (log + (err ? "\n" + err : "")).split("\n");
+  $("log").innerHTML = lines.map((l) => {
+    const e = escapeHtml(l);
+    if (/ERROR/.test(l)) return `<span class="err">${e}</span>`;
+    if (/WARNING|MISMATCH|<--/.test(l)) return `<span class="warn">${e}</span>`;
+    return e;
+  }).join("\n");
+}
+
+function showResult(m) {
+  $("empty").hidden = true;
+  $("out").hidden = false;
+  renderLog(m.log || "", m.err || "");
+  $("timing").textContent = m.seconds ? `· ${m.seconds.toFixed(1)} s` : "";
+  const scans = $("scans");
+  scans.innerHTML = "";
+  if (!m.ok) {
+    const errText = (m.err || "").trim() || "The calculation stopped; see diagnostics.";
+    showError(errText);
+    $("downloads").hidden = true;
+    return;
+  }
+  showError("");
+  const R = m.result;
+  if (R && R.scans) R.scans.forEach((s, i) => scans.appendChild(renderScan(s, R, i)));
+  renderDownloads(m.files || {});
+  if (matchMedia("(max-width: 960px)").matches) $("out").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function fmtE(x) { return x === null || x === undefined ? "–" : Number(x).toExponential(2); }
+function fmtF(x, d = 3) { return x === null || x === undefined ? "–" : Number(x).toFixed(d); }
+
+function speciesLabel(sp) {
+  const i = sp.lastIndexOf("_q");
+  const name = sp.slice(0, i), q = parseInt(sp.slice(i + 2), 10);
+  const part = (p) => { const j = p.indexOf("_"); return j < 0 ? p : `${p.slice(0, j)}<sub>${p.slice(j + 1).replace(/_/g, "")}</sub>`; };
+  const nm = name.split(/--|-(?=[A-Z])/).map(part).join("–");
+  const sup = q === 0 ? "0" : `${Math.abs(q) > 1 ? Math.abs(q) : ""}${q > 0 ? "+" : "−"}`;
+  return `${nm}<sup>${sup}</sup>`;
+}
+
+function theme() {
+  const dark = document.documentElement.dataset.theme === "dark" ||
+    (document.documentElement.dataset.theme !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+  const cs = getComputedStyle(document.documentElement);
+  return { dark, text: cs.getPropertyValue("--text").trim(), muted: cs.getPropertyValue("--muted").trim(),
+    border: cs.getPropertyValue("--border").trim(), surface: cs.getPropertyValue("--surface").trim(),
+    pal: dark ? PALETTE.dark : PALETTE.light };
+}
+
+function renderScan(scan, R, idx) {
+  const card = document.createElement("div");
+  card.className = "card";
+  const panels = [];
+  if (scan.growth.length) panels.push({ key: "final", label: `${R.T} K, frozen-in`, rows: scan.final, T: R.T });
+  if (scan.growth.length) panels.push({ key: "growth", label: `${R.T_growth} K, equilibrium (growth)`, rows: scan.growth, T: R.T_growth });
+  if (!scan.growth.length) panels.push({ key: "final", label: `${R.T} K, equilibrium`, rows: scan.final, T: R.T });
+
+  const fr = scan.final;
+  const nmin = Math.min(...fr.map((r) => r.n ?? Infinity)), nmax = Math.max(...fr.map((r) => r.n ?? 0));
+  const efmin = Math.min(...fr.map((r) => r.EF)), efmax = Math.max(...fr.map((r) => r.EF));
+  const flags = fr.filter((r) => r.flag).length;
+
+  card.innerHTML = `
+    <div class="scan-head">
+      <h2>Δμ<sub>${escapeHtml(scan.elem)}</sub> scan <span class="muted">· ${escapeHtml(scan.base)}</span></h2>
+      <div class="tabs" role="tablist"></div>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="k">E<sub>F</sub> at ${R.T} K (eV above VBM)</div><div class="v">${fmtF(efmin, 2)} – ${fmtF(efmax, 2)}</div></div>
+      <div class="kpi"><div class="k">n at ${R.T} K (cm⁻³)</div><div class="v">${fmtE(nmin)} – ${fmtE(nmax)}</div></div>
+      <div class="kpi"><div class="k">Band gap</div><div class="v">${fmtF(R.bandgap, 2)} eV</div></div>
+      ${flags ? `<div class="kpi"><div class="k">Points without a neutral E<sub>F</sub></div><div class="v">${flags}</div></div>` : ""}
+    </div>
+    <div class="chips" aria-label="Species shown"></div>
+    <div class="chart" id="chart${idx}"></div>
+    <div class="row"><button class="btn small" type="button" data-act="png">Download chart (PNG)</button>
+      <button class="btn small" type="button" data-act="svg">SVG</button></div>
+    <details><summary>Table</summary><div class="tablewrap"></div></details>`;
+
+  // species selection: those that exceed PLOT_MIN anywhere, colours follow the species (fixed order)
+  const t = theme();
+  const pmin = R.plot_min || 1e6;
+  const all = R.species;
+  const colorOf = (sp) => t.pal[all.indexOf(sp) % t.pal.length];
+  const dashOf = (sp) => DASHES[Math.floor(all.indexOf(sp) / t.pal.length) % DASHES.length];
+  const visible = new Set(all.filter((sp) => panels.some((p) => p.rows.some((r) => (r.conc[sp] || 0) > pmin))));
+  const chips = card.querySelector(".chips");
+  all.forEach((sp) => {
+    const lab = document.createElement("label");
+    lab.className = "chip";
+    lab.innerHTML = `<input type="checkbox" ${visible.has(sp) ? "checked" : ""}><span class="sw" style="background:${colorOf(sp)}"></span><span>${speciesLabel(sp)}</span>`;
+    lab.querySelector("input").addEventListener("change", (e) => { e.target.checked ? visible.add(sp) : visible.delete(sp); draw(); });
+    chips.appendChild(lab);
+  });
+
+  let current = 0;
+  const tabs = card.querySelector(".tabs");
+  if (panels.length > 1) {
+    panels.forEach((p, i) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.role = "tab"; b.textContent = p.label;
+      b.setAttribute("aria-selected", String(i === current));
+      b.addEventListener("click", () => {
+        current = i;
+        tabs.querySelectorAll("button").forEach((x, j) => x.setAttribute("aria-selected", String(j === i)));
+        draw(); table();
+      });
+      tabs.appendChild(b);
+    });
+  } else { tabs.remove(); }
+
+  const chartEl = card.querySelector(".chart");
+  function draw() {
+    const th = theme();
+    const p = panels[current];
+    const x = p.rows.map((r) => r.dmu);
+    const traces = [];
+    [...visible].sort((a, b) => all.indexOf(a) - all.indexOf(b)).forEach((sp) => {
+      traces.push({ x, y: p.rows.map((r) => r.conc[sp] || null), name: speciesLabel(sp), mode: "lines",
+        line: { color: th.pal[all.indexOf(sp) % th.pal.length], width: 2, dash: dashOf(sp) },
+        hovertemplate: "%{y:.2e} cm⁻³<extra>%{fullData.name}</extra>", xaxis: "x", yaxis: "y" });
+    });
+    traces.push({ x, y: p.rows.map((r) => r.n), name: "n", mode: "lines", line: { color: th.text, width: 2, dash: "dash" },
+      hovertemplate: "%{y:.2e} cm⁻³<extra>n</extra>", xaxis: "x", yaxis: "y" });
+    traces.push({ x, y: p.rows.map((r) => r.p), name: "p", mode: "lines", line: { color: th.muted, width: 2, dash: "dot" },
+      hovertemplate: "%{y:.2e} cm⁻³<extra>p</extra>", xaxis: "x", yaxis: "y" });
+    traces.push({ x, y: p.rows.map((r) => r.EF), name: "E<sub>F</sub>", mode: "lines", showlegend: false,
+      line: { color: th.text, width: 2 }, hovertemplate: "E<sub>F</sub> = %{y:.3f} eV<extra></extra>", xaxis: "x", yaxis: "y2" });
+    const ys = traces.filter((tr) => tr.yaxis === "y").flatMap((tr) => tr.y).filter((v) => v > 0);
+    const ymax = ys.length ? Math.ceil(Math.log10(Math.max(...ys))) : 20;
+    const ymin = Math.max(Math.log10(pmin), ymax - 16);
+    const axis = { gridcolor: th.border, zerolinecolor: th.border, linecolor: th.border, tickcolor: th.border,
+      color: th.text, ticks: "outside" };
+    Plotly.react(chartEl, traces, {
+      paper_bgcolor: th.surface, plot_bgcolor: th.surface, font: { family: getComputedStyle(document.body).fontFamily, color: th.text, size: 12 },
+      margin: { l: 66, r: 12, t: 28, b: 52 }, hovermode: "x unified", showlegend: true,
+      legend: { orientation: "h", y: 1.07, x: 0, font: { size: 12 } },
+      title: { text: p.label, x: 0.99, xanchor: "right", y: 0.995, font: { size: 13, color: th.muted } },
+      xaxis: { ...axis, title: { text: `Δμ<sub>${scan.elem}</sub> (eV)` }, anchor: "y2" },
+      yaxis: { ...axis, type: "log", domain: [0.36, 1], range: [ymin, ymax], exponentformat: "power", title: { text: "Concentration (cm⁻³)" } },
+      yaxis2: { ...axis, domain: [0, 0.28], title: { text: "E<sub>F</sub> (eV)" }, range: [-0.15, R.bandgap + 0.15] },
+      shapes: [0, R.bandgap].map((yv) => ({ type: "line", xref: "paper", x0: 0, x1: 1, yref: "y2", y0: yv, y1: yv,
+        line: { color: th.muted, width: 1, dash: "dash" } })),
+    }, { responsive: true, displaylogo: false, modeBarButtonsToRemove: ["select2d", "lasso2d"] });
+  }
+
+  function table() {
+    const p = panels[current];
+    const cols = ["dmu", "EF", "n", "p", ...[...visible]];
+    const head = `<tr><th>Δμ (eV)</th><th>E<sub>F</sub> (eV)</th><th>n</th><th>p</th>${[...visible].map((s) => `<th>${speciesLabel(s)}</th>`).join("")}</tr>`;
+    const body = p.rows.map((r) => `<tr>${cols.map((c, i) =>
+      `<td>${i < 2 ? fmtF(r[c], i ? 3 : 3) : fmtE(c in r ? r[c] : r.conc[c])}${i === 1 && r.flag ? " ⚠" : ""}</td>`).join("")}</tr>`).join("");
+    card.querySelector(".tablewrap").innerHTML = `<table>${head}${body}</table>`;
+  }
+
+  card.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () =>
+    Plotly.downloadImage(chartEl, { format: b.dataset.act, filename: `defconchem_${scan.base}_${panels[current].key}`, width: 1100, height: 700, scale: 2 })));
+  card._draw = draw;
+  requestAnimationFrame(() => { draw(); table(); });
+  return card;
+}
+
+function renderDownloads(files) {
+  const list = $("dlList");
+  list.innerHTML = "";
+  const add = (name, text, type = "text/plain") => {
+    const a = document.createElement("a");
+    a.className = "btn small";
+    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.download = name;
+    a.textContent = name;
+    list.appendChild(a);
+  };
+  Object.entries(files).forEach(([n, t]) => add(n, t));
+  if (lastRun) add("input.txt", lastRun.input);
+  $("downloads").hidden = list.children.length === 0;
+}
+
+/* ------------------------------------------------------------------ wiring */
+async function loadExample() {
+  try {
+    const t = $("exampleSrc").textContent.replace(/^\n/, "");   // inline copy: works from file:// too
+    loadInputText(t, "the Cl:ZnO example");
+  } catch (e) { showError("Could not load the example: " + e); }
+}
+
+function saveInput() {
+  const { text } = composeInput(false);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+  a.download = "defconchem.input";
+  a.click();
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  loadExample();
+  $("btnExample").addEventListener("click", loadExample);
+  $("btnSave").addEventListener("click", saveInput);
+  $("fileInput").addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (f) loadInputText(await f.text(), f.name);
+    e.target.value = "";
+  });
+  $("btnRun").addEventListener("click", () => runCalc(false));
+  $("btnCheck").addEventListener("click", () => runCalc(true));
+  document.querySelectorAll('input[name="cell"], #freezeOn, #scanOn, #dosType, #dosFile').forEach((el) =>
+    el.addEventListener("change", syncVisibility));
+  $("dosFile").addEventListener("change", () => { if ($("dosFile").files[0]) { setRadio("cm", "DOS"); $("dosFile").dataset.ref = ""; } });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () =>
+    document.querySelectorAll("#scans .card").forEach((c) => c._draw && c._draw()));
+  startEngine();   // after the example, so an engine note stays visible
+});

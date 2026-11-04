@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>defconchem — defect &amp; carrier concentrations</title>
+<meta name="description" content="Self-consistent Fermi level, defect and carrier concentrations from DFT formation energies, with freeze-in. Runs entirely in your browser.">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js" defer></script>
+<script src="engine.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-inner">
+    <div>
+      <a href="../../tools.html">← CMKU Research Tools</a>
+      <h1>defconchem</h1>
+      <p class="sub">Self-consistent Fermi level, defect and carrier concentrations from formation energies — with freeze-in</p>
+    </div>
+    <div class="status" id="status" role="status"><span class="dot"></span><span id="statusText">Starting…</span></div>
+  </div>
+</header>
+
+<main class="wrap grid">
+  <!-- ======================= INPUTS ======================= -->
+  <section class="inputs" aria-label="Inputs">
+    <div class="toolbar">
+      <button class="btn" id="btnExample" type="button">Load example (Cl:ZnO)</button>
+      <label class="btn">Open input file<input type="file" id="fileInput" hidden></label>
+      <button class="btn" id="btnSave" type="button">Save input file</button>
+    </div>
+    <p class="hint" id="loadHint" hidden></p>
+
+    <fieldset class="card">
+      <legend>Host band structure</legend>
+      <div class="row">
+        <label class="field grow"><span>Band gap (eV)</span><input id="bandgap" type="number" step="0.001" value="3.30"></label>
+      </div>
+      <div class="seg" role="radiogroup" aria-label="Carrier model">
+        <label><input type="radio" name="cm" value="EMA" checked> Effective masses</label>
+        <label><input type="radio" name="cm" value="DOS"> DOS file</label>
+      </div>
+      <p class="hint">Fill in both to compare: the model not selected is printed as an N<sub>c</sub>/N<sub>v</sub> ratio check.</p>
+
+      <div class="sub-card">
+        <h3>Effective masses <span class="muted">(DOS masses, m₀)</span></h3>
+        <div class="row">
+          <label class="field"><span>m<sub>e</sub>*</span><input id="me" type="number" step="0.01" value="0.28"></label>
+          <label class="field"><span>m<sub>h</sub>*</span><input id="mh" type="number" step="0.01" value="0.59"></label>
+          <label class="field"><span>α<sub>e</sub> (1/eV)</span><input id="ae" type="number" step="0.01" placeholder="0"></label>
+          <label class="field"><span>α<sub>h</sub> (1/eV)</span><input id="ah" type="number" step="0.01" placeholder="0"></label>
+        </div>
+      </div>
+
+      <div class="sub-card">
+        <h3>DOS file <span class="muted">(DOSCAR, vasprun.xml or 2-column text)</span></h3>
+        <div class="row">
+          <label class="field grow"><span>File</span><input id="dosFile" type="file"></label>
+          <label class="field"><span>Type</span><select id="dosType"><option value="auto">auto</option><option value="doscar">DOSCAR</option><option value="vasprun">vasprun.xml</option><option value="text">text (E−VBM, DOS)</option></select></label>
+        </div>
+        <div class="row">
+          <label class="field"><span>NELECT</span><input id="nelect" type="number" step="1" placeholder="e.g. 36"></label>
+          <label class="field"><span>VBM (eV)</span><input id="dosVbm" type="number" step="0.0001" placeholder="auto"></label>
+          <label class="field"><span>CBM (eV)</span><input id="dosCbm" type="number" step="0.0001" placeholder="auto"></label>
+        </div>
+        <div class="row" id="textOpts" hidden>
+          <label class="field"><span>DOS cell volume (Å³)</span><input id="dosVol" type="number" step="0.001"></label>
+          <label class="field"><span>Spin columns</span><select id="spin"><option value="1">1 (total)</option><option value="2">2 (up, down)</option></select></label>
+        </div>
+        <p class="hint">VBM/CBM: eigenvalues on the file's energy scale (e.g. VASPKIT 911). NELECT renormalises the DOS — always set it; a DOS from a run with NSW&nbsp;&gt;&nbsp;0 is divided by NSW (VASP KBLOCK).</p>
+      </div>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Defect-site cell</legend>
+      <div class="seg" role="radiogroup" aria-label="Cell volume source">
+        <label><input type="radio" name="cell" value="vol" checked> Volume</label>
+        <label><input type="radio" name="cell" value="poscar"> POSCAR</label>
+      </div>
+      <div class="row">
+        <label class="field" id="volField"><span>Volume (Å³)</span><input id="vol" type="number" step="0.001" value="47.67"></label>
+        <label class="field grow" id="poscarField" hidden><span>POSCAR</span><input id="poscarFile" type="file"></label>
+      </div>
+      <p class="hint">“Sites per cell” in each DEFECT line refer to this cell.</p>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Temperatures</legend>
+      <div class="row">
+        <label class="field"><span>Final T (K)</span><input id="T" type="number" step="1" value="300"></label>
+        <label class="check"><input id="freezeOn" type="checkbox" checked> Freeze-in from growth</label>
+      </div>
+      <div class="row" id="freezeOpts">
+        <label class="field"><span>Growth T (K)</span><input id="Tg" type="number" step="1" value="800"></label>
+        <label class="field grow"><span>Frozen defects</span><input id="frozen" type="text" value="ALL"></label>
+      </div>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Chemical-potential scan</legend>
+      <label class="check"><input id="scanOn" type="checkbox" checked> Scan Δμ of one element</label>
+      <div class="row" id="scanOpts">
+        <label class="field"><span>Name</span><input id="base" type="text" value="scan"></label>
+        <label class="field"><span>Element</span><input id="elem" type="text" value="O"></label>
+        <label class="field"><span>From (eV)</span><input id="mu0" type="number" step="0.01" value="-3.19"></label>
+        <label class="field"><span>To (eV)</span><input id="mu1" type="number" step="0.01" value="0"></label>
+        <label class="field"><span>Points</span><input id="nmu" type="number" step="1" min="1" value="41"></label>
+      </div>
+      <p class="hint">E<sub>f</sub> = Ef0 + q·E<sub>F</sub> + n·Δμ, with n set by STOICH lines below (n = atoms removed; use effective slopes for linked potentials).</p>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Defects, complexes &amp; stoichiometry</legend>
+      <textarea id="editor" spellcheck="false" aria-label="Defect definitions" rows="18"></textarea>
+      <details class="ref">
+        <summary>Syntax reference</summary>
+        <pre id="refText">Loading…</pre>
+      </details>
+    </fieldset>
+
+    <div class="actions">
+      <button class="btn" id="btnCheck" type="button" disabled>Check inputs</button>
+      <button class="btn primary" id="btnRun" type="button" disabled>Run</button>
+    </div>
+    <div class="progress" id="progress" hidden><div id="progressBar"></div></div>
+  </section>
+
+  <!-- ======================= RESULTS ======================= -->
+  <section class="results" aria-label="Results" aria-live="polite">
+    <div class="empty" id="empty">
+      <h2>Results</h2>
+      <p>Load the example or your own input, then press <b>Run</b>. Everything runs in your browser (Python via Pyodide); no files are uploaded anywhere.</p>
+      <ol>
+        <li>Set the band gap and either effective masses or a DOS file (with NELECT).</li>
+        <li>Give the defect-site cell volume and temperatures.</li>
+        <li>Describe defects in the editor (DEFECT / STATE / COMPLEX / STOICH).</li>
+        <li><b>Check inputs</b> prints the diagnostics; <b>Run</b> solves charge neutrality.</li>
+      </ol>
+    </div>
+    <div id="out" hidden>
+      <div class="card" id="errorBox" hidden></div>
+      <div id="scans"></div>
+      <details class="card" id="logCard" open>
+        <summary>Diagnostics <span class="muted" id="timing"></span></summary>
+        <pre id="log"></pre>
+      </details>
+      <div class="card" id="downloads" hidden>
+        <h3>Downloads</h3>
+        <div class="dl" id="dlList"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap foot">
+  <p>defconchem <span id="ver"></span> · CMKU, Kasetsart University · Dilute-limit defect thermodynamics; see README for method, validation and limitations.
+  Formation energies, band edges and site counts are the user's responsibility.</p>
+</footer>
+<script type="text/plain" id="exampleSrc">
+############################################################
+# Cl in ZnO - example for defconchem (web app or command line)
+# Formation energies from S. Charoenphon et al., Phys. Rev. Materials 10, 084602 (2026)
+# Carriers from effective masses (no DOS file needed). To use a DOS instead, add
+#   DOS_FILE DOSCAR / NELECT 36 / CARRIER_MODEL DOS
+# m_h* below is illustrative; for n-type Cl:ZnO it has almost no effect.
+############################################################
+BANDGAP         3.30
+EFFECTIVE_MASS  0.28  0.59          # m_e*  m_h*  (DOS masses, in m0)
+CARRIER_MODEL   EMA
+VOLUME_ANG3     47.67               # 4-atom primitive wurtzite cell (2 Zn, 2 O sites)
+
+TEMPERATURE         300             # device temperature (K)
+FREEZE_TEMPERATURE  800             # growth temperature (K)
+FREEZE_DEFECTS      ALL
+
+DMU_RANGE  ClZnO  O  -3.19  0.0  41
+
+# ---------- defects: DEFECT <name> <sites per cell>; STATE <q> <Ef0> <g> ----------
+DEFECT V_Zn 2
+STATE  2    2.60   1
+STATE  1    2.92   1
+STATE  0    3.82   1
+STATE -1    5.17   1
+STATE -2    6.98   1
+END
+
+DEFECT V_O 2
+STATE  0    4.25   1
+STATE  1    2.31   1
+STATE  2   -0.12   1
+END
+
+DEFECT Cl_O 2
+STATE  0    3.43   1
+STATE  1   -0.39   1
+END
+
+COMPLEX  Cl_O--V_Zn
+COMP     Cl_O_q1   1    V_Zn_q-2   1
+BINDING  2.09
+G_COMPLEX 4.0
+END
+
+# ---------- chemical-potential dependence (n = atoms removed) ----------
+STOICH  V_Zn   O   -1.0
+STOICH  V_O    O    1.0
+STOICH  Cl_O   O    0.5
+</script>
+<script type="text/plain" id="templateSrc"># ===================== defconchem.py input =====================
+# Lines starting with # are comments. Keywords are case-insensitive.
+# All formation energies: E_f(q) = Ef0 + q*E_F + n*dmu
+#   E_F measured from the VBM; Ef0 = formation energy at E_F = 0 (VBM)
+#   at the reference chemical potential (dmu = 0, see DMU_RANGE / STOICH).
+
+# ---------- host & DOS ----------
+DOS_FILE      DOSCAR        # DOSCAR, vasprun.xml, or 2-column text (E-VBM, DOS)
+BANDGAP       3.29          # eV. If different from the DOS gap, CB is scissor-shifted
+# DOS_VOLUME_ANG3 47.57     # only needed for 2-column text DOS (volume of the DOS cell)
+# SPIN 2                    # only for text DOS with columns E up down
+# NELECT 36                 # valence electrons in the DOS cell: the DOS is renormalised so the VB
+#                           #   holds NELECT electrons (like SC-FERMI). Strongly recommended.
+# DOS_VBM 4.123             # optional override: absolute VBM energy in the DOS file
+# DOS_CBM 7.410             # optional override: absolute CBM energy in the DOS file
+#
+# Alternative / cross-check: effective-mass bands (no DOS file needed)
+# EFFECTIVE_MASS 0.28 0.59  # m_e* m_h* [alpha_e alpha_h]  (DOS masses; alpha = Kane
+#                           #   non-parabolicity in 1/eV, default 0 = parabolic)
+# CARRIER_MODEL  DOS        # DOS or EMA. If both DOS_FILE and EFFECTIVE_MASS are given,
+#                           #   this picks which is used; the other is printed for comparison.
+
+# ---------- defect-site cell ----------
+# nsites in DEFECT lines are "sites per cell" of THIS cell (VOLUME_ANG3 or POSCAR):
+VOLUME_ANG3   47.57         # e.g. primitive wurtzite ZnO cell (2 O, 2 Zn sites)
+# POSCAR_FILE POSCAR
+
+# ---------- temperatures ----------
+TEMPERATURE         300     # final (measurement) temperature, K
+FREEZE_TEMPERATURE  800     # growth temperature, K (omit for full equilibrium at TEMPERATURE)
+FREEZE_DEFECTS      ALL     # ALL, or a list of defect/complex names to freeze
+
+# ---------- defects ----------
+# DEFECT <name> <sites per cell>
+#   STATE q=<charge> Ef0=<eV> [g=<degeneracy>]
+DEFECT ClO 2
+  STATE q=1  Ef0=-0.38
+  STATE q=0  Ef0=3.43
+END
+DEFECT VO 2
+  STATE q=2  Ef0=-0.10
+  STATE q=0  Ef0=4.26
+END
+DEFECT VZn 2
+  STATE q=2  Ef0=2.584
+  STATE q=1  Ef0=2.903
+  STATE q=0  Ef0=3.800
+  STATE q=-1 Ef0=5.154
+  STATE q=-2 Ef0=6.964
+END
+
+# ---------- complexes (two equivalent ways) ----------
+# (a) From binding energy: E_f(complex) = sum nu*E_f(component) - BINDING
+#     Several COMPLEX blocks with the same name = charge states of one complex.
+COMPLEX ClO-VZn
+  COMP ClO_q1 1 VZn_q-2 1     # component charge states and multiplicities
+  BINDING 2.09
+  G_COMPLEX 1                 # orientational degeneracy per site
+# SITES 2                     # sites/cell (default: sites of first component)
+END
+COMPLEX ClO-VZn
+  COMP ClO_q1 1 VZn_q-1 1     # neutral complex
+  BINDING 1.37
+END
+# (b) Directly from its own formation energies (like a DEFECT):
+# DEFECT ClO-VZn 2
+#   CONTAINS ClO 1 VZn 1      # atom bookkeeping for frozen totals
+#   STATE q=0  Ef0=3.40
+#   STATE q=-1 Ef0=4.49
+# END
+
+# ---------- optional fixed total concentration (e.g. known dopant level) ----------
+# TOTAL_CONC ClO 1e19         # cm^-3, total incl. atoms bound in complexes
+
+# ---------- chemical-potential scan ----------
+# STOICH <defect> <element> <n> : adds n*dmu to E_f   (n = atoms REMOVED;
+#   use effective slopes for linked potentials, e.g. Cl_O vs mu_O = +0.5)
+# Complexes inherit the sum of their components' STOICH automatically.
+STOICH ClO O  0.5
+STOICH VO  O  1
+STOICH VZn O -1
+# DMU_RANGE <base> <element> <start> <end> <steps>
+DMU_RANGE ClZnO O -3.22 0.0 41
+
+# ---------- plotting (optional) ----------
+# PLOT_MIN 1e6                # hide species that never exceed this (cm^-3)
+# PLOT_SPECIES ClO_q1 VZn_q-2 ClO-VZn_q-1   # explicit list instead
+</script>
+</body>
+</html>
