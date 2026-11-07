@@ -337,6 +337,19 @@ function renderScan(scan, R, idx) {
     <div class="chart" id="chart${idx}"></div>
     <div class="row"><button class="btn small" type="button" data-act="png">Download chart (PNG)</button>
       <button class="btn small" type="button" data-act="svg">SVG</button></div>
+    <fieldset class="agr">
+      <legend>Grace / xmgrace project (.agr)</legend>
+      <div class="agr-opts">
+        <span class="agr-panels"></span>
+        <label><input type="checkbox" data-agr="conc" checked> Concentrations</label>
+        <label><input type="checkbox" data-agr="carriers" checked> n, p</label>
+        <label><input type="checkbox" data-agr="ef" checked> <span>E<sub>F</sub></span></label>
+        <label><input type="checkbox" data-agr="edges" checked> Band edges</label>
+        <label><input type="checkbox" data-agr="legend" checked> Legend</label>
+        <button class="btn small" type="button" data-agr-dl>Download .agr</button>
+      </div>
+      <p class="hint">Defect species follow the selection above. Axis labels, ticks, lines and legends stay editable in xmgrace.</p>
+    </fieldset>
     <details><summary>Table</summary><div class="tablewrap"></div></details>`;
 
   // species selection: those that exceed PLOT_MIN anywhere, colours follow the species (fixed order)
@@ -417,6 +430,36 @@ function renderScan(scan, R, idx) {
 
   card.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () =>
     Plotly.downloadImage(chartEl, { format: b.dataset.act, filename: `defconchem_${scan.base}_${panels[current].key}`, width: 1100, height: 700, scale: 2 })));
+  // Grace export: panels to include (one column each), graphs and species from the chips
+  const agrPanels = card.querySelector(".agr-panels");
+  if (panels.length > 1) {
+    panels.forEach((p, i) => {
+      const lab = document.createElement("label");
+      lab.innerHTML = `<input type="checkbox" data-agr-panel="${i}" checked> ${escapeHtml(p.label)}`;
+      agrPanels.appendChild(lab);
+    });
+  } else { agrPanels.remove(); }
+  card.querySelector("[data-agr-dl]").addEventListener("click", () => {
+    const opt = (k) => card.querySelector(`[data-agr="${k}"]`).checked;
+    const chosen = panels.length > 1
+      ? panels.filter((p, i) => card.querySelector(`[data-agr-panel="${i}"]`).checked) : panels;
+    const species = [...visible].sort((a, b) => all.indexOf(a) - all.indexOf(b));
+    let text;
+    try {
+      if (!window.DefconAgr) throw new Error("agr.js is missing next to index.html.");
+      if (!chosen.length) throw new Error("Select at least one panel for the Grace file.");
+      text = DefconAgr.build({ panels: chosen, species, allSpecies: all, bandgap: R.bandgap, plotMin: pmin,
+        xLabel: `\\xDm\\f{}\\s${scan.elem}\\N (eV)`, conc: opt("conc"), carriers: opt("carriers"), ef: opt("ef"),
+        bandEdges: opt("edges"), legend: opt("legend") });
+    } catch (e) { showError(String(e.message || e)); return; }
+    showError("");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+    a.download = `defconchem_${scan.base}.agr`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+
   card._draw = draw;
   requestAnimationFrame(() => { draw(); table(); });
   return card;

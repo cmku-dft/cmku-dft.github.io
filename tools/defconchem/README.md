@@ -24,6 +24,7 @@ The web app also contains `engine.js`, a JavaScript port of the same engine (sam
 3. Set the host band structure — **effective masses** or a **DOS file** (DOSCAR, vasprun.xml or two-column text) — the defect-site cell, temperatures and the chemical-potential scan.
 4. Describe defects, complexes and stoichiometry in the editor (syntax reference is built in).
 5. **Check inputs** prints the diagnostics; **Run** solves charge neutrality, plots concentrations and E_F versus Δμ, and offers the result tables (`.dat`) and the generated input file for download.
+6. **Grace / xmgrace project (.agr)** under each chart: tick the panels (frozen-in / growth), the graphs (concentrations, n and p, E_F, band edges) and the legend, then **Download .agr**. The defect species are the ones selected with the chips above the chart. Each panel becomes a column with a log-scale concentration graph over an E_F graph; axis labels, tick marks, line styles, colours and legends are ordinary Grace settings that you can edit in xmgrace (`xmgrace defconchem_*.agr`).
 
 If you give both a DOS file and effective masses, the one not selected is reported as an Nc/Nv ratio — a quick convergence check.
 
@@ -104,6 +105,7 @@ The page loads Pyodide and Plotly from cdn.jsdelivr.net. For an offline/self-hos
 index.html, style.css, app.js   web interface
 worker.js                       runs the Python engine in a Web Worker (Pyodide)
 engine.js                       JavaScript port of the engine (offline / fallback)
+agr.js                          Grace (.agr) project export of the plotted results
 py/defconchem.py                engine + command-line tool
 py/check_dos.py                 DOS sanity checker
 examples/Cl_ZnO_EMA.input       example (Cl donors in ZnO)

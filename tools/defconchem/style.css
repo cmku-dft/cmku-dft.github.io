@@ -135,3 +135,9 @@ th { position: sticky; top: 0; background: var(--surface); color: var(--text-2);
 .dl { display: flex; flex-wrap: wrap; gap: 8px; }
 .dl a { text-decoration: none; }
 .foot { color: var(--muted); font-size: 12.5px; padding-bottom: 28px; }
+fieldset.agr { border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px 4px; margin: 10px 0 6px; }
+fieldset.agr legend { font-size: 13px; font-weight: 600; padding: 0 4px; }
+.agr-opts, .agr-panels { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 13px; }
+.agr-opts label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.agr-opts input { margin: 0; accent-color: var(--accent); }
+fieldset.agr .hint { margin: 6px 0 2px; }
